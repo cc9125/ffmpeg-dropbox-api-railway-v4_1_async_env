@@ -1,3 +1,4 @@
+
 import os
 import requests
 import subprocess
@@ -17,67 +18,69 @@ def get_access_token():
                 "refresh_token": refresh_token,
                 "client_id": client_id,
                 "client_secret": client_secret
-            }
+            },
+            timeout=20
         )
-        if r.status_code == 200:
-            return r.json().get("access_token")
-        else:
-            raise Exception(f"Failed to refresh token: {r.text}")
-    elif access_token:
+        r.raise_for_status()
+        return r.json().get("access_token")
+    if access_token:
         return access_token
-    else:
-        raise Exception("No Dropbox token configured.")
+    raise RuntimeError("No Dropbox token configured (refresh or access).")
 
 def download_file(shared_url):
-    # 轉 dl=0 → dl=1
+    if not shared_url:
+        return None
     if "dl=0" in shared_url:
         shared_url = shared_url.replace("dl=0", "dl=1")
     local_path = tempfile.mktemp()
-    r = requests.get(shared_url, stream=True)
-    if r.status_code == 200:
+    with requests.get(shared_url, stream=True, timeout=120) as r:
+        r.raise_for_status()
         with open(local_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-        return local_path
-    else:
-        return None
+            for chunk in r.iter_content(chunk_size=1024*1024):
+                if chunk:
+                    f.write(chunk)
+    return local_path
 
 def upload_to_dropbox(local_path, dropbox_path):
-    access_token = get_access_token()
+    token = get_access_token()
     with open(local_path, "rb") as f:
         headers = {
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/octet-stream",
-            "Dropbox-API-Arg": f"{{\"path\": \"{dropbox_path}\", \"mode\": \"add\", \"autorename\": true}}"
+            "Dropbox-API-Arg": f'{{"path":"{dropbox_path}","mode":"overwrite","autorename":false,"mute":true}}'
         }
-        r = requests.post("https://content.dropboxapi.com/2/files/upload", headers=headers, data=f)
-    if r.status_code != 200:
-        raise Exception(f"Dropbox upload failed: {r.text}")
+        r = requests.post("https://content.dropboxapi.com/2/files/upload", headers=headers, data=f, timeout=300)
+        r.raise_for_status()
 
 def split_audio_and_upload(local_file, segment_time, overlap_seconds, fmt, dest_root, group_prefix, max_dirs, max_files_per_dir):
     tmp_dir = tempfile.mkdtemp()
-    ffmpeg_cmd = [
-        "ffmpeg", "-i", local_file, "-f", "segment",
+    out_tmpl = os.path.join(tmp_dir, f"{group_prefix}-%03d.{fmt}")
+    cmd = [
+        "ffmpeg", "-hide_banner", "-nostdin", "-y",
+        "-i", local_file,
+        "-f", "segment",
         "-segment_time", str(segment_time),
         "-segment_overlap", str(overlap_seconds),
         "-c", "copy",
-        os.path.join(tmp_dir, f"out_%03d.{fmt}")
+        out_tmpl
     ]
-    subprocess.run(ffmpeg_cmd, check=True)
+    p = subprocess.run(cmd, capture_output=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {p.stderr.decode('utf-8', 'ignore')[:4000]}")
 
-    # 上傳
-    results = []
     files = sorted(os.listdir(tmp_dir))
-    dir_index = 1
-    file_count = 0
-    for f in files:
-        if file_count >= max_files_per_dir:
-            dir_index += 1
-            file_count = 0
-        if dir_index > max_dirs:
+    results = []
+    dir_idx = 1
+    count_in_dir = 0
+    for fname in files:
+        if count_in_dir >= int(max_files_per_dir):
+            dir_idx += 1
+            count_in_dir = 0
+        if dir_idx > int(max_dirs):
             break
-        dropbox_path = f"{dest_root}/{str(dir_index).zfill(2)}/{f}"
-        upload_to_dropbox(os.path.join(tmp_dir, f), dropbox_path)
+        subdir = f"{dir_idx:02d}"
+        dropbox_path = f"{dest_root}/{subdir}/{fname}"
+        upload_to_dropbox(os.path.join(tmp_dir, fname), dropbox_path)
         results.append(dropbox_path)
-        file_count += 1
+        count_in_dir += 1
     return {"uploaded": results, "total_segments": len(results)}

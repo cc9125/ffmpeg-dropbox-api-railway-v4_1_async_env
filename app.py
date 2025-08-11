@@ -1,8 +1,13 @@
+
 from flask import Flask, request, jsonify
 import os
 from dropbox_utils import download_file, split_audio_and_upload
 
 app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "ok", "endpoints": ["/health","/start"]})
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -11,7 +16,7 @@ def health():
 @app.route("/start", methods=["POST"])
 def start():
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         url = data.get("url")
         segment_time = data.get("segment_time", 400)
         overlap_seconds = data.get("overlap_seconds", 10)
@@ -34,4 +39,5 @@ def start():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", "8080"))
+    app.run(host="0.0.0.0", port=port)

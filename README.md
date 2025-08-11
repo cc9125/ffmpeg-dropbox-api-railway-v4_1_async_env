@@ -1,14 +1,13 @@
-# ffmpeg-dropbox-api-railway-v4_2_async_refresh
 
-## 功能
-- 支援 Dropbox Refresh Token 自動換 Access Token
-- 分段切音檔並上傳到 Dropbox 指定資料夾
-- 可設定最大資料夾數量與每個資料夾最大檔案數
+# v4.2 Async + Refresh Patch
+
+## 修正內容
+- 綁定 `$PORT`（Railway 相容）
+- 新增 `/` 路由，通過 Healthcheck
+- 內建 ffmpeg
+- 自動使用 Refresh Token 換取 Access Token
 
 ## 部署
-1. 取得 Dropbox Refresh Token
-2. Railway 環境變數設定：
-   - DROPBOX_CLIENT_ID
-   - DROPBOX_CLIENT_SECRET
-   - DROPBOX_REFRESH_TOKEN
-3. Deploy
+1. 設定環境變數：DROPBOX_CLIENT_ID, DROPBOX_CLIENT_SECRET, DROPBOX_REFRESH_TOKEN
+2. Healthcheck Path 設 `/health` 或 `/`
+3. Start Command: `gunicorn -b 0.0.0.0:$PORT app:app`
