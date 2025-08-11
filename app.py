@@ -233,7 +233,7 @@ def start_job():
     url = data.get("url")
     token = resolve_token(data.get("dropbox_token"))
     if not url or not ("dropbox.com" in url or "dropboxusercontent.com" in url):
-        return jsonify({"error": "Missing or invalid Dropbox URL"},"data": data."url": url), 400
+        return jsonify({"error": "Missing or invalid Dropbox URL","data": data,"url": url}), 400
     if not token:
         return jsonify({"error": "Missing dropbox_token (body or env DROPBOX_ACCESS_TOKEN)"}), 400
 
