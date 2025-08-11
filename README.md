@@ -1,6 +1,14 @@
-# FFmpeg Dropbox Split & Upload API — v4.1 (Async + ENV token)
+# ffmpeg-dropbox-api-railway-v4_2_async_refresh
 
-- Token 可來自 request body 或環境變數 `DROPBOX_ACCESS_TOKEN`。
-- POST /start   -> 回傳 { job_id, state: "queued", group_prefix }
-- GET  /status  -> 回傳 job 狀態（token 來自 query 或環境變數）
-- 狀態 JSON 儲存位置： {dest_root}/_jobs/{job_id}.json
+## 功能
+- 支援 Dropbox Refresh Token 自動換 Access Token
+- 分段切音檔並上傳到 Dropbox 指定資料夾
+- 可設定最大資料夾數量與每個資料夾最大檔案數
+
+## 部署
+1. 取得 Dropbox Refresh Token
+2. Railway 環境變數設定：
+   - DROPBOX_CLIENT_ID
+   - DROPBOX_CLIENT_SECRET
+   - DROPBOX_REFRESH_TOKEN
+3. Deploy
