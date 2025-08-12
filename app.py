@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import os
-from dropbox_utils import download_file, split_audio_and_upload
+from dropbox_utils import download_file, split_audio_and_upload, upload_to_dropbox
+import time
 
 app = Flask(__name__)
 
@@ -38,6 +39,19 @@ def start():
         return jsonify({"data": result}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route("/diag", methods=["POST","GET"])
+def diag():
+    try:
+        # 產生一個小檔案上傳到 /test/WAV/_jobs/
+        ts = int(time.time())
+        local_tmp = os.path.join(tempfile.gettempdir(), f"diag-{ts}.txt")
+        with open(local_tmp, "w", encoding="utf-8") as f:
+            f.write(f"diag {ts}")
+        upload_to_dropbox(local_tmp, f"/test/WAV/_jobs/diag-{ts}.txt")
+        return jsonify({"ok": True, "path": f"/test/WAV/_jobs/diag-{ts}.txt"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT","8080"))

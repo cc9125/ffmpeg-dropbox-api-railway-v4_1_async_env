@@ -43,6 +43,7 @@ def download_file(shared_url:str)->str|None:
 
 # --- 上傳到 Dropbox（帶簡單重試） ---
 def upload_to_dropbox(local_path:str, dropbox_path:str, retries:int=3, backoff:float=1.0):
+    last_err = None
     for attempt in range(1, retries+1):
         token = get_access_token()
         with open(local_path,"rb") as f:
@@ -51,15 +52,16 @@ def upload_to_dropbox(local_path:str, dropbox_path:str, retries:int=3, backoff:f
                 "Content-Type": "application/octet-stream",
                 "Dropbox-API-Arg": f'{{"path":"{dropbox_path}","mode":"overwrite","autorename":false,"mute":true}}'
             }
-            r = requests.post(DBX_UPLOAD_URL, headers=headers, data=f, timeout=600)
+            r = requests.post("https://content.dropboxapi.com/2/files/upload", headers=headers, data=f, timeout=600)
         if r.status_code == 200:
             return
-        # 429/5xx → 退避重試；其他錯誤直接丟出
-        if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+        # 保留錯誤細節
+        last_err = f"{r.status_code} {r.reason}: {r.text}"
+        if r.status_code in (429,500,502,503,504) and attempt < retries:
             time.sleep(backoff * attempt)
             continue
-        r.raise_for_status()
-
+        raise requests.HTTPError(last_err)
+    
 # --- 取音檔秒數（可失敗；失敗則回傳 None） ---
 def probe_duration_seconds(local_file:str)->float|None:
     try:
