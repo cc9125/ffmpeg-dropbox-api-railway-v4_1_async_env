@@ -43,11 +43,6 @@ def download_file(shared_url:str)->str|None:
     return lp
 
 def upload_to_dropbox(local_path: str, dropbox_path: str, retries: int = 3, backoff: float = 1.0):
-    """
-    上傳檔案到 Dropbox，支援中文/特殊字元路徑。
-    做法：Dropbox-API-Arg 用 json.dumps (ensure_ascii=True 預設)，
-    將非 ASCII 自動轉成 \uXXXX，符合 HTTP header 限制且 Dropbox 可正確解析。
-    """
     last_err = None
     for attempt in range(1, retries + 1):
         token = get_access_token()  # 每次都用 refresh token 取新的 access token（如果可用）
