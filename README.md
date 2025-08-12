@@ -1,3 +1,14 @@
+# v4.2 r1 — Always Refresh Dropbox Access Token per call
+
+Endpoints:
+- GET /health
+- GET/POST /diag  (writes /test/WAV/_jobs/diag-<ts>.txt to verify Dropbox auth)
+- POST /start
+
+Env vars:
+- DROPBOX_CLIENT_ID, DROPBOX_CLIENT_SECRET, DROPBOX_REFRESH_TOKEN
+(optional) DROPBOX_ACCESS_TOKEN as fallback
+
 # railway-whisper-dropbox v4.2 (Async + Refresh + Healthcheck)
 
 Endpoints:
