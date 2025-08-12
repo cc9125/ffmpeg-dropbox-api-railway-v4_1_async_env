@@ -1,10 +1,12 @@
-import os, requests, subprocess, tempfile, shutil, time
+import os, requests, subprocess, tempfile, shutil, time, json
 
 OAUTH_TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 DBX_UPLOAD_URL  = "https://content.dropboxapi.com/2/files/upload"
 
 def get_access_token():
-    #Always refresh on every call if refresh credentials exist; otherwise fall back to static access token.
+    """
+    Always refresh on every call if refresh credentials exist; otherwise fall back to static access token.
+    """
     rt  = os.getenv("DROPBOX_REFRESH_TOKEN")
     cid = os.getenv("DROPBOX_CLIENT_ID")
     sec = os.getenv("DROPBOX_CLIENT_SECRET")
@@ -40,25 +42,44 @@ def download_file(shared_url:str)->str|None:
                 if ch: f.write(ch)
     return lp
 
-def upload_to_dropbox(local_path:str, dropbox_path:str, retries:int=3, backoff:float=1.0):
+def upload_to_dropbox(local_path: str, dropbox_path: str, retries: int = 3, backoff: float = 1.0):
+    """
+    上傳檔案到 Dropbox，支援中文/特殊字元路徑。
+    做法：Dropbox-API-Arg 用 json.dumps (ensure_ascii=True 預設)，
+    將非 ASCII 自動轉成 \uXXXX，符合 HTTP header 限制且 Dropbox 可正確解析。
+    """
     last_err = None
-    for attempt in range(1, retries+1):
-        token = get_access_token()  # always refresh/fetch
-        with open(local_path,"rb") as f:
+    for attempt in range(1, retries + 1):
+        token = get_access_token()  # 每次都用 refresh token 取新的 access token（如果可用）
+        with open(local_path, "rb") as f:
+            api_args = {
+                "path": dropbox_path,          # 可以直接用含中文的字串，如 "/test/錄音/檔案.wav"
+                "mode": "overwrite",
+                "autorename": False,
+                "mute": True
+            }
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/octet-stream",
-                "Dropbox-API-Arg": f'{{"path":"{dropbox_path}","mode":"overwrite","autorename":false,"mute":true}}'
+                # 注意：不要設 ensure_ascii=False，保持預設 True 才能把中文轉為 \uXXXX 放進 header
+                "Dropbox-API-Arg": json.dumps(api_args)  
             }
             r = requests.post(DBX_UPLOAD_URL, headers=headers, data=f, timeout=600)
+
         if r.status_code == 200:
-            return
+            return  # 成功
+
+        # 保留完整錯誤細節，便於診斷（例如 missing_scope、path/not_found 等）
         last_err = f"{r.status_code} {r.reason}: {r.text}"
-        if r.status_code in (429,500,502,503,504) and attempt < retries:
+
+        # 429/5xx 採退避重試
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
             time.sleep(backoff * attempt)
             continue
-        raise requests.HTTPError(last_err)
 
+        # 其他錯誤直接丟出
+        raise requests.HTTPError(last_err)
+    
 def probe_duration_seconds(local_file:str):
     try:
         p = subprocess.run(
