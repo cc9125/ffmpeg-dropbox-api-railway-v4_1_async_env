@@ -61,8 +61,8 @@ def upload_to_dropbox(local_path: str, dropbox_path: str, retries: int = 3, back
             headers = {
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/octet-stream",
-                # 注意：不要設 ensure_ascii=False，保持預設 True 才能把中文轉為 \uXXXX 放進 header
-                "Dropbox-API-Arg": json.dumps(api_args)  
+                # 讓 json.dumps 幫你 escape 中文，避免 unicodeescape 問題
+                "Dropbox-API-Arg": json.dumps(api_args, ensure_ascii=True)
             }
             r = requests.post(DBX_UPLOAD_URL, headers=headers, data=f, timeout=600)
 
