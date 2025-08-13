@@ -1,4 +1,22 @@
 
+# Dropbox Orchestrator v5.1 (Railway) — with cursor persistence on Dropbox
+
+Endpoints:
+- GET  /health
+- GET  /diag
+- POST /list-changes   {path, recursive, cursor, limit}
+- POST /ensure-slices  {url, segment_time, overlap_seconds, format, dest_root, group_prefix, max_dirs, max_files_per_dir}
+- POST /list-slices    {dest_root, group_prefix, format}
+- POST /shared-link    {path}
+- GET  /cursor/get
+- POST /cursor/set
+- POST /start          (legacy)
+
+Env:
+- DROPBOX_CLIENT_ID, DROPBOX_CLIENT_SECRET, DROPBOX_REFRESH_TOKEN
+- (optional) API_KEY  -> require header X-Api-Key
+- (optional) CURSOR_PATH (default: /test/WAV/_jobs/cursor.json)
+
 # Dropbox Orchestrator v5 (Railway)
 
 Endpoints:

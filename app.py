@@ -1,29 +1,30 @@
 
 from flask import Flask, request, jsonify
-import os, time, tempfile
+import os, tempfile, time, json
 
 from dropbox_utils import (
-    list_changes, list_slices, ensure_slices,
-    get_shared_link, ACCESS_GUARD_OK
+    list_changes, list_slices, ensure_slices, get_shared_link,
+    write_text_to_dropbox, read_text_from_dropbox, download_file, split_audio_and_upload
 )
 
 app = Flask(__name__)
 
-def guard():
-    # Optional API key check
-    api_key_env = os.getenv("API_KEY")
-    if not api_key_env:
+API_KEY = os.getenv("API_KEY")
+CURSOR_PATH = os.getenv("CURSOR_PATH", "/test/WAV/_jobs/cursor.json")
+
+def check_api_key():
+    if not API_KEY:
         return True
-    return request.headers.get("X-Api-Key") == api_key_env
+    return request.headers.get("X-Api-Key") == API_KEY
 
 @app.before_request
-def _check_key():
-    if not guard():
+def _guard():
+    if not check_api_key():
         return jsonify({"error":"unauthorized"}), 401
 
 @app.route("/", methods=["GET"])
 def root():
-    return jsonify({"ok": True, "service": "Dropbox Orchestrator v5", "endpoints": ["/health","/diag","/list-changes","/ensure-slices","/list-slices","/shared-link","/start"]})
+    return jsonify({"ok": True, "service": "Dropbox Orchestrator v5.1", "endpoints": ["/health","/diag","/list-changes","/ensure-slices","/list-slices","/shared-link","/cursor/get","/cursor/set","/start"]})
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -31,7 +32,6 @@ def health():
 
 @app.route("/diag", methods=["GET"])
 def diag():
-    # quickly verify token refresh & simple API call (list root)
     try:
         res = list_changes(path="", recursive=False, cursor=None, limit=1)
         return jsonify({"ok": True, "sample": res.get("entries", [])[:1]}), 200
@@ -84,8 +84,27 @@ def api_shared_link():
     res = get_shared_link(path)
     return jsonify(res), 200
 
-# Legacy: keep /start for direct split+upload
-from dropbox_utils import download_file, split_audio_and_upload
+@app.route("/cursor/get", methods=["GET"])
+def cursor_get():
+    try:
+        txt = read_text_from_dropbox(CURSOR_PATH)
+        if not txt:
+            return jsonify({"cursor": None})
+        data = json.loads(txt)
+        return jsonify({"cursor": data.get("cursor")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/cursor/set", methods=["POST"])
+def cursor_set():
+    try:
+        cur = (request.get_json(force=True) or {}).get("cursor", None)
+        write_text_to_dropbox(json.dumps({"cursor": cur}), CURSOR_PATH)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# Legacy direct split
 @app.route("/start", methods=["POST"])
 def start():
     try:
@@ -103,12 +122,11 @@ def start():
         local_file = download_file(url)
         if not local_file:
             return jsonify({"error":"Failed to download source"}), 400
-        result = split_audio_and_upload(local_file, segment_time, overlap_seconds, fmt,
-                                        dest_root, group_prefix, max_dirs, max_files_per_dir)
+        result = split_audio_and_upload(local_file, segment_time, overlap_seconds, fmt, dest_root, group_prefix, max_dirs, max_files_per_dir)
         return jsonify({"data": result}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8080"))
+    port = int(os.environ.get("PORT","8080"))
     app.run(host="0.0.0.0", port=port)

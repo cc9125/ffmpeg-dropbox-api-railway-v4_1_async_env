@@ -27,7 +27,6 @@ def api_call(endpoint:str, payload:dict, content=False, headers_extra=None, stre
     token = get_access_token()
     headers = {"Authorization": f"Bearer {token}"}
     if content:
-        # caller must set Dropbox-API-Arg etc.
         if headers_extra:
             headers.update(headers_extra)
         url = f"{DBX_CONTENT_URL}/{endpoint}"
@@ -56,7 +55,6 @@ def list_folder(path:str):
     return api_call("files/list_folder", {"path": path, "recursive": False})
 
 def search_slices(dest_root:str, group_prefix:str, fmt:str):
-    # Prefer search_v2 under dest_root to speed up
     body = {
         "query": group_prefix,
         "options": {
@@ -95,24 +93,11 @@ def search_slices(dest_root:str, group_prefix:str, fmt:str):
 def group_by_dir(paths:list[str], dest_root:str):
     out = {"01":[], "02":[], "03":[], "04":[], "05":[]}
     for p in paths:
-        # expect .../dest_root/XX/filename
         parts = p.split("/")
-        try:
-            idx = parts.index(dest_root.strip("/").lower().split("/")[-1])
-        except ValueError:
-            # attempt approximate: find 'xx' component
-            for comp in parts:
-                if len(comp)==2 and comp.isdigit():
-                    idx = parts.index(comp)
-                    break
-            else:
-                continue
-        # dir token likely next segment
         for comp in parts:
             if len(comp)==2 and comp.isdigit() and comp in out:
                 out[comp].append(p)
                 break
-    # sort
     for k in out:
         out[k] = sorted(out[k])
     return out
@@ -125,7 +110,6 @@ def list_slices(dest_root:str, group_prefix:str, fmt:str):
     return {"total_segments": total, "slices_by_dir": grouped}
 
 def get_shared_link(path:str):
-    # list_shared_links first
     try:
         res = api_call("sharing/list_shared_links", {"path": path, "direct_only": True})
         links = res.get("links", [])
@@ -138,7 +122,6 @@ def get_shared_link(path:str):
             return {"url": url, "existed": True}
     except Exception:
         pass
-    # create
     res = api_call("sharing/create_shared_link_with_settings", {"path": path, "settings": {"audience":"public","access":"viewer","allow_download": True}})
     url = res.get("url","")
     if "dl=0" in url:
@@ -197,6 +180,30 @@ def upload_to_dropbox(local_path:str, dropbox_path:str, retries:int=3, backoff:f
         # 其他錯誤直接丟出
         raise requests.HTTPError(last_err)
 
+def write_text_to_dropbox(text:str, path:str):
+    token = get_access_token()
+    args = {"path": path, "mode":"overwrite", "autorename": False, "mute": True}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/octet-stream",
+        "Dropbox-API-Arg": json.dumps(args)
+    }
+    r = requests.post(f"{DBX_CONTENT_URL}/files/upload", headers=headers, data=text.encode("utf-8"), timeout=60)
+    if r.status_code >= 400:
+        raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text}")
+
+def read_text_from_dropbox(path:str)->str|None:
+    token = get_access_token()
+    args = {"path": path}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Dropbox-API-Arg": json.dumps(args)
+    }
+    r = requests.post(f"{DBX_CONTENT_URL}/files/download", headers=headers, timeout=60)
+    if r.status_code == 200:
+        return r.content.decode("utf-8", "ignore")
+    return None
+
 def probe_duration_seconds(local_file:str):
     try:
         p = subprocess.run(
@@ -228,7 +235,6 @@ def split_audio_and_upload(local_file:str, segment_time:int, overlap_seconds:int
             out_name = f"{group_prefix}-{part_idx:03d}.{fmt}"
             out_path = os.path.join(tmp, out_name)
 
-            # fast copy
             cmd_copy = ["ffmpeg","-hide_banner","-nostdin","-y","-ss", str(max(0.0, start)),"-i", local_file,"-t", str(segment_time),"-map","0:a:0","-vn","-c:a","copy", out_path]
             p = subprocess.run(cmd_copy, capture_output=True)
             if p.returncode != 0 or (not os.path.exists(out_path) or os.path.getsize(out_path) < 1024):
@@ -264,12 +270,10 @@ def split_audio_and_upload(local_file:str, segment_time:int, overlap_seconds:int
         shutil.rmtree(tmp, ignore_errors=True)
 
 def ensure_slices(url, segment_time, overlap_seconds, fmt, dest_root, group_prefix, max_dirs, max_files_per_dir):
-    # Check existing
     existing = list_slices(dest_root, group_prefix, fmt)
     if existing.get("total_segments",0) > 0:
         existing["already_sliced"] = True
         return existing
-    # else slice
     local_file = download_file(url)
     if not local_file:
         raise RuntimeError("Download failed")
