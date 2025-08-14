@@ -76,14 +76,23 @@ def api_ensure_slices():
     return jsonify(res), 200
 
 @app.route("/shared-link", methods=["POST"])
-def api_shared_link():
-    data = request.get_json(force=True) or {}
-    path = data.get("path")
-    if not path:
-        return jsonify({"error":"Missing path"}), 400
-    res = get_shared_link(path)
-    return jsonify(res), 200
+def shared_link_route():
+    try:
+        data = request.get_json(force=True) or {}
+        path = data.get("path")
+        prefer_tmp = data.get("temporary", True)
+        if not path or not isinstance(path, str):
+            return jsonify({"error": "Missing 'path'"}), 400
 
+        out = get_shared_link(path, prefer_temporary=prefer_tmp)
+        return jsonify(out), 200
+
+    except Exception as e:
+        # 盡量把 Dropbox 的錯誤訊息透出，方便你在 Make 看 log 排錯
+        msg = str(e)
+        # 你也可以在 api_call 裡把 HTTP 狀態碼、Dropbox .tag 帶上來
+        return jsonify({"error": "shared_link_failed", "detail": msg}), 502
+    
 @app.route("/cursor/get", methods=["GET"])
 def cursor_get():
     try:

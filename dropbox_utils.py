@@ -109,27 +109,75 @@ def list_slices(dest_root:str, group_prefix:str, fmt:str):
     total = sum(len(v) for v in grouped.values())
     return {"total_segments": total, "slices_by_dir": grouped}
 
-def get_shared_link(path:str):
+def _normalize_shared_url(url: str) -> str:
+    # 共享連結（非臨時）預設 dl=0，要改成 dl=1 才能直接下載
+    if not url:
+        return url
+    if "dl=0" in url:
+        return url.replace("dl=0", "dl=1")
+    if "dl=1" not in url:
+        return url + ("&dl=1" if "?" in url else "?dl=1")
+    return url
+
+def get_shared_link(path: str, prefer_temporary: bool = True) -> dict:
+    """
+    取得 Dropbox 檔案下載連結。
+    先嘗試 files/get_temporary_link（只需 files.content.read），
+    失敗再走 sharing/list_shared_links → create_shared_link_with_settings。
+    回傳:
+      {"url": "...", "kind": "temporary" | "shared_existing" | "shared_created", "existed": bool}
+    失敗會丟出帶細節的 Exception（給外層路由轉成 4xx/5xx JSON）
+    """
+    if not path or not isinstance(path, str):
+        raise ValueError("Missing or invalid 'path'")
+
+    # 1) 臨時連結：最穩、權限需求低
+    if prefer_temporary:
+        try:
+            tmp = api_call("files/get_temporary_link", {"path": path})
+            link = tmp.get("link")
+            if link:
+                return {"url": link, "kind": "temporary", "existed": True}
+        except Exception as e:
+            # 這裡不要直接吞，留給後面共享連結流程兜底
+            # 如果你想要更嚴格，可以檢查 e 裡的 Dropbox 錯誤 .tag 是否 path/not_found → 直接 raise 404
+            pass
+
+    # 2) 既有共享連結（需要 sharing.read）
     try:
         res = api_call("sharing/list_shared_links", {"path": path, "direct_only": True})
-        links = res.get("links", [])
+        links = res.get("links", []) or []
         if links:
-            url = links[0].get("url","")
-            if "dl=0" in url:
-                url = url.replace("dl=0","dl=1")
-            elif "dl=1" not in url:
-                url = url + ("&dl=1" if "?" in url else "?dl=1")
-            return {"url": url, "existed": True}
-    except Exception:
-        pass
-    res = api_call("sharing/create_shared_link_with_settings", {"path": path, "settings": {"audience":"public","access":"viewer","allow_download": True}})
-    url = res.get("url","")
-    if "dl=0" in url:
-        url = url.replace("dl=0","dl=1")
-    elif "dl=1" not in url:
-        url = url + ("&dl=1" if "?" in url else "?dl=1")
-    return {"url": url, "existed": False}
+            url = _normalize_shared_url(links[0].get("url", ""))
+            if url:
+                return {"url": url, "kind": "shared_existing", "existed": True}
+    except Exception as e:
+        # 如果是缺 scope（missing_scope）就不要卡死，往下嘗試 create；否則保留細節由外層回傳
+        last_err = e
 
+    # 3) 建立共享連結（需要 sharing.write）
+    try:
+        res = api_call(
+            "sharing/create_shared_link_with_settings",
+            {"path": path, "settings": {"audience": "public", "access": "viewer", "allow_download": True}}
+        )
+        url = _normalize_shared_url(res.get("url", ""))
+        if url:
+            return {"url": url, "kind": "shared_created", "existed": False}
+    except Exception as e:
+        # 可能 409: shared_link_already_exists → 再讀一次
+        try:
+            res2 = api_call("sharing/list_shared_links", {"path": path, "direct_only": True})
+            links2 = res2.get("links", []) or []
+            if links2:
+                url = _normalize_shared_url(links2[0].get("url", ""))
+                if url:
+                    return {"url": url, "kind": "shared_existing", "existed": True}
+        except Exception:
+            pass
+        # 把最後的錯誤丟回給外層處理（讓路由回 4xx/502，而不是 500）
+        raise e
+    
 def to_direct(shared_url:str)->str:
     if not shared_url: return shared_url
     if "dl=0" in shared_url: return shared_url.replace("dl=0","dl=1")
@@ -186,7 +234,7 @@ def write_text_to_dropbox(text:str, path:str):
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/octet-stream",
-        "Dropbox-API-Arg": json.dumps(args)
+        "Dropbox-API-Arg": json.dumps(args, ensure_ascii=True)
     }
     r = requests.post(f"{DBX_CONTENT_URL}/files/upload", headers=headers, data=text.encode("utf-8"), timeout=60)
     if r.status_code >= 400:
@@ -197,7 +245,7 @@ def read_text_from_dropbox(path:str)->str|None:
     args = {"path": path}
     headers = {
         "Authorization": f"Bearer {token}",
-        "Dropbox-API-Arg": json.dumps(args)
+        "Dropbox-API-Arg": json.dumps(args, ensure_ascii=True)
     }
     r = requests.post(f"{DBX_CONTENT_URL}/files/download", headers=headers, timeout=60)
     if r.status_code == 200:
